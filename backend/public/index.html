@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BSE Trades Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, Segoe UI, sans-serif; margin: 0; background: #f4f6f8; color: #1a2330; }
+  header { background: #12324a; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  header h1 { margin: 0; font-size: 20px; }
+  main { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  .card { background: #fff; border-radius: 8px; padding: 14px 18px; min-width: 180px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card .label { font-size: 12px; color: #6b7785; text-transform: uppercase; letter-spacing: .5px; }
+  .card .value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+  .idle { background: #e5e9ee; color: #4a5766; }
+  .running { background: #fff1cc; color: #8a5a00; }
+  .complete { background: #d6f5e0; color: #17623a; }
+  .offline { background: #fde0e0; color: #9b1c1c; }
+  button { background: #1f8a5b; color: #fff; border: 0; padding: 9px 16px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+  button:disabled { background: #9aa6b2; cursor: not-allowed; }
+  .progress { height: 8px; background: #dde3ea; border-radius: 4px; overflow: hidden; margin-bottom: 16px; }
+  .progress > div { height: 100%; width: 0; background: #1f8a5b; transition: width .4s; }
+  .table-wrap { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); max-height: 60vh; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid #edf0f3; }
+  th { position: sticky; top: 0; background: #f0f3f6; font-size: 12px; text-transform: uppercase; color: #5a6675; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.new { animation: flash 1.5s ease-out; }
+  @keyframes flash { from { background: #d6f5e0; } to { background: transparent; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>BSE Trades Dashboard</h1>
+  <div>
+    <span id="conn" class="badge offline">Connecting...</span>
+    <button id="pullBtn">Start Pull</button>
+  </div>
+</header>
+<main>
+  <div class="cards">
+    <div class="card"><div class="label">Trades loaded</div><div class="value" id="count">0</div></div>
+    <div class="card"><div class="label">Pull status</div><div class="value"><span id="state" class="badge idle">idle</span></div></div>
+    <div class="card"><div class="label">Batch</div><div class="value" id="batch">-</div></div>
+  </div>
+  <div class="progress"><div id="bar"></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Trade ID</th><th>Client</th><th>Symbol</th><th class="num">Qty</th><th class="num">Price</th><th>Timestamp</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const rowsEl = document.getElementById('rows');
+  const countEl = document.getElementById('count');
+  const stateEl = document.getElementById('state');
+  const batchEl = document.getElementById('batch');
+  const barEl = document.getElementById('bar');
+  const connEl = document.getElementById('conn');
+  const pullBtn = document.getElementById('pullBtn');
+
+  let lastSeq = 0;
+  let total = 0;
+
+  function addRows(trades, highlight) {
+    if (!trades.length) return;
+    const frag = document.createDocumentFragment();
+    // newest first: iterate so the highest seq ends up on top
+    for (const t of trades) {
+      const tr = document.createElement('tr');
+      if (highlight) tr.className = 'new';
+      const cells = [t.trade_id, t.client, t.symbol, t.quantity, t.price.toFixed(2), new Date(t.timestamp).toLocaleString()];
+      cells.forEach((c, i) => {
+        const td = document.createElement('td');
+        if (i === 3 || i === 4) td.className = 'num';
+        td.textContent = c;
+        tr.appendChild(td);
+      });
+      frag.prepend(tr);
+      lastSeq = Math.max(lastSeq, t.seq);
+    }
+    rowsEl.prepend(frag);
+    total += trades.length;
+    countEl.textContent = total.toLocaleString();
+  }
+
+  function showStatus(s) {
+    stateEl.textContent = s.state;
+    stateEl.className = 'badge ' + s.state;
+    if (s.totalBatches) {
+      batchEl.textContent = `${s.batch} / ${s.totalBatches}`;
+      barEl.style.width = (s.batch / s.totalBatches * 100) + '%';
+    } else {
+      batchEl.textContent = s.state === 'running' ? 'starting...' : '-';
+      barEl.style.width = '0';
+    }
+    pullBtn.disabled = s.state === 'running';
+  }
+
+  // 1) Instant load of what is already saved
+  async function loadSaved() {
+    const r = await fetch('/api/trades?after=' + lastSeq);
+    const data = await r.json();
+    addRows(data.trades, lastSeq > 0);
+    showStatus(data.status);
+  }
+
+  // 2) Live updates (no polling): the server pushes to us
+  function connect() {
+    const es = new EventSource('/events');
+
+    es.onopen = () => {
+      connEl.textContent = 'Live';
+      connEl.className = 'badge complete';
+      loadSaved(); // catch up on anything missed while disconnected
+    };
+    es.addEventListener('trades', (e) => addRows(JSON.parse(e.data), true));
+    es.addEventListener('status', (e) => showStatus(JSON.parse(e.data)));
+    es.onerror = () => {
+      connEl.textContent = 'Reconnecting...';
+      connEl.className = 'badge offline';
+      // EventSource retries automatically
+    };
+  }
+
+  pullBtn.addEventListener('click', async () => {
+    pullBtn.disabled = true;
+    const r = await fetch('/api/pull', { method: 'POST' });
+    if (!r.ok) {
+      const err = await r.json();
+      alert(err.error || 'Could not start pull');
+      pullBtn.disabled = false;
+    }
+  });
+
+  connect();
+</script>
+</body>
+</html>
