@@ -37,17 +37,11 @@ flowchart LR
 ## Why this design
 
 | Requirement | How it is met |
-
 |---|---|
-
 | 15-min pull vs 30-s connection limit | `/getTrades` returns `202` immediately. Data comes back later as short webhook calls, each under a second. |
-
 | Dashboard opens instantly | It reads from our own SQLite database, never from BSE. |
-
 | Shows trades even mid-pull | Batches are saved as they arrive, so the database always holds partial results. |
-
 | Live updates, no refresh | Server-Sent Events push new rows to open dashboards. |
-
 | No polling, no cron | A pull starts from a user action. Data is pushed by webhook and SSE, with no timers that check for work. |
 
 ## Key decisions

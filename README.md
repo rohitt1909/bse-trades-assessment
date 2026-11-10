@@ -83,19 +83,12 @@ PULL_DELAY_MS=20000 node server.js
 ## Configuration
 
 | Variable | Service | Default | Meaning |
-
 |---|---|---|---|
-
 | `PULL_DELAY_MS` | mock-bse | 900000 (15 min) | Total time a pull takes |
-
 | `TOTAL_TRADES` | mock-bse | 3000 | Number of seeded trades |
-
 | `BATCH_SIZE` | mock-bse | 500 | Trades per webhook batch |
-
 | `PORT` | both | 5000 / 4000 | Listening port |
-
 | `BSE_URL` | backend | http://localhost:5000 | Where the mock BSE runs |
-
 | `PUBLIC_URL` | backend | http://localhost:4000 | Webhook base URL given to BSE |
 
 ## How to verify the requirements
